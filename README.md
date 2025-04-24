@@ -16,8 +16,6 @@
 **Driftweed** is a lightweight and powerful information gathering toolkit for networks and websites.  
 Easily retrieve HTTP headers, DNS records, WHOIS info, IP & ASN data, open ports, technologies used, and more — all from a simple CLI interface.
 
-![driftweed-banner](https://raw.githubusercontent.com/hesamz3090/driftweed/main/assets/banner.png)
-
 ---
 
 ## 📦 Features
@@ -38,6 +36,8 @@ Easily retrieve HTTP headers, DNS records, WHOIS info, IP & ASN data, open ports
 
 - Python 3.6+
 - See `requirements.txt` for dependencies
+- Linux OS (Preferred, Screenshot ,Port and ASN working only on linux)
+- Tested with Ubuntu Operating Systems.
 
 ---
 
