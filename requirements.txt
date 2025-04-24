@@ -1,0 +1,8 @@
+aslookup
+requests
+builtwith
+python-nmap
+python-whois
+selenium
+dnspython
+setuptools

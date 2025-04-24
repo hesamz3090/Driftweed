@@ -1,5 +1,5 @@
+import os
 from io import BytesIO
-from urllib.parse import urlparse
 import socket
 from aslookup import get_as_data
 import requests
@@ -11,28 +11,42 @@ from selenium import webdriver
 from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.firefox.options import Options
 import dns.resolver
+from urllib.parse import urlparse, urlunparse
+from datetime import datetime
+
+
+def normalize_url(url):
+    parsed = urlparse(url if '://' in url else 'http://' + url)
+    netloc = parsed.netloc.lower()
+    path = parsed.path.rstrip('/')
+    normalized = urlunparse((parsed.scheme, netloc, path, '', '', ''))
+    return normalized
 
 
 class Driftweed:
     def __init__(
             self, url: str,
-            http_status=False,
-            tech_detect=False,
-            port_scan=False,
-            ip_lookup=False,
-            asn_lookup=False,
-            check_dns=False
+            get_http_status=False,
+            get_tech_detect=False,
+            get_port_scan=False,
+            get_whois_info=False,
+            get_ip_lookup=False,
+            get_asn_lookup=False,
+            get_screenshot=False,
+            get_dns_check=False
     ):
         super().__init__()
-        self.url = url
+        self.url = normalize_url(url)
         self.hostname = urlparse(self.url).hostname
 
-        self.http_status = http_status
-        self.tech_detect = tech_detect
-        self.port_scan = port_scan
-        self.ip_lookup = ip_lookup
-        self.asn_lookup = asn_lookup
-        self.check_dns = check_dns
+        self.get_http_status = get_http_status
+        self.get_tech_detect = get_tech_detect
+        self.get_port_scan = get_port_scan
+        self.get_whois_info = get_whois_info
+        self.get_ip_lookup = get_ip_lookup
+        self.get_asn_lookup = get_asn_lookup
+        self.get_screenshot = get_screenshot
+        self.get_dns_check = get_dns_check
 
         try:
             self.ip = str(socket.gethostbyname(self.hostname))
@@ -79,7 +93,7 @@ class Driftweed:
                     'status_code': response.status_code,
                     'content_type': response.headers.get('Content-Type', 'N/A'),
                     'content_len': len(response.text),
-                    'redirect': response.url != self.url,
+                    'redirect': normalize_url(response.url) != self.url,
                     'response_time': response.elapsed.total_seconds(),
                     'ssl': self.url.lower().startswith('https'),
                     'final_url': response.url,
@@ -117,8 +131,7 @@ class Driftweed:
 
             nm.scan(
                 hosts=self.hostname,
-                arguments=f'-p {start_port}-{end_port}',
-                timeout=30
+                arguments=f'-p {start_port}-{end_port} --host-timeout 30s',
             )
 
             port_list = []
@@ -148,7 +161,7 @@ class Driftweed:
             return {
                 'status': 'Completed',
                 'result': [
-                    {'tag': key, 'value': value, 'category': 'Data'}
+                    {key: value}
                     for key, value in response.items()
                     if value
                 ],
@@ -166,11 +179,11 @@ class Driftweed:
             return {
                 'status': 'Completed',
                 'result': [
-                    {'tag': 'city', 'value': response['city'], 'category': 'Data'},
-                    {'tag': 'region', 'value': response['region'], 'category': 'Data'},
-                    {'tag': 'country', 'value': response['country'], 'category': 'Data'},
-                    {'tag': 'location', 'value': response['loc'], 'category': 'Data'},
-                    {'tag': 'organization', 'value': response['org'], 'category': 'Data'},
+                    {'city': response['city']},
+                    {'region': response['region']},
+                    {'country': response['country']},
+                    {'location': response['loc']},
+                    {'organization': response['org']},
                 ],
             }
         except Exception as error:
@@ -181,16 +194,16 @@ class Driftweed:
 
     def asn_lookup(self) -> dict:
         try:
-            asn_result = get_as_data(self.hostname, service="shadowserver")
+            asn_result = get_as_data(self.ip, service="shadowserver")
             return {
                 'status': 'Completed',
                 'result': [
-                    {'tag': 'ASN Number', 'value': asn_result.asn},
-                    {'tag': 'ASN Handle', 'value': asn_result.handle},
-                    {'tag': 'ASN Name', 'value': asn_result.as_name},
-                    {'tag': 'ISP', 'value': asn_result.isp},
-                    {'tag': 'Prefix', 'value': asn_result.prefix},
-                    {'tag': 'Country Code', 'value': asn_result.cc},
+                    {'ASN Number': asn_result.asn},
+                    {'ASN Handle': asn_result.handle},
+                    {'ASN Name': asn_result.as_name},
+                    {'ISP': asn_result.isp},
+                    {'Prefix': asn_result.prefix},
+                    {'Country Code': asn_result.cc},
                 ],
             }
 
@@ -220,16 +233,20 @@ class Driftweed:
             screenshot = BytesIO(screenshot_png)
 
             # Optionally save the screenshot to the specified path
-            if path:
-                with open(path, 'wb') as f:
-                    f.write(screenshot.getbuffer())
-                    logging.info(f'Screenshot saved to {path}')
+            if not path:
+                current_directory = os.getcwd()
+                now = datetime.now().strftime('%m-%d_%H-%M')
+                file_name = self.hostname + '_' + now + '.png'
+                path = os.path.join(current_directory, file_name)
+
+            with open(path, 'wb') as f:
+                f.write(screenshot.getbuffer())
 
             driver.quit()
             return {
-                'status': 'COMPLETED',
+                'status': 'Completed',
                 'result': [
-                    {'tag': 'screenshot', 'value': path, 'category': 'Document'},
+                    {'path': path},
                 ]
             }
 
@@ -239,39 +256,62 @@ class Driftweed:
                 'result': str(error),
             }
 
-    def check_dns(self) -> dict:
-        dns_records = {"A": [], "MX": [], "TXT": [], "CNAME": [], "NS": []}
+    def dns_check(self) -> dict:
+        try:
+            record_list = []
+            dns_list = ['A', 'MX', 'TXT', 'CNAME', 'NS']
+            for name in dns_list:
+                try:
+                    answers = dns.resolver.resolve(self.hostname, name)
+                    if len(answers) > 1:
+                        record_list.append(
+                            {name: [str(r) for r in answers]}
+                        )
+                    else:
+                        record_list.append(
+                            {name: str(answers[0])}
+                        )
 
-        for rtype in dns_records:
-            try:
-                answers = dns.resolver.resolve(self.hostname, rtype)
-                dns_records[rtype] = [str(r.to_text()) for r in answers]
-            except dns.resolver.NoAnswer:
-                dns_records[rtype] = ["No Answer"]
-            except dns.resolver.NXDOMAIN:
-                dns_records[rtype] = ["Domain Not Found"]
-            except Exception as e:
-                dns_records[rtype] = [f"Error: {e}"]
+                except dns.resolver.NoAnswer:
+                    record_list.append(
+                        {name: 'No Answer'}
+                    )
+                except dns.resolver.NXDOMAIN:
+                    record_list.append(
+                        {name: 'Domain Not Found'}
+                    )
+                except Exception as e:
+                    record_list.append(
+                        {name: str(e)}
+                    )
 
-        return dns_records
+            return {
+                'status': 'Completed',
+                'result': record_list
+            }
+
+        except Exception as error:
+            return {
+                'status': 'Error',
+                'result': str(error),
+            }
 
     def run(self) -> dict:
-        if self.http_status:
-            result['http_status'] = self.http_status()
-        if self.tech_detect:
-            result['tech_detect'] = self.tech_detect()
-        if self.port_scan:
-            result['port_scan'] = self.port_scan()
-        if self.ip_lookup:
-            result['ip_lookup'] = self.ip_lookup()
-        if self.asn_lookup:
-            result['asn_lookup'] = self.asn_lookup()
-
-        if self.check_dns:
-            result['check_dns'] = self.check_dns()
-        return result
-
-
-obj = Driftweed('https://www.google.com')
-result = obj.ip_lookup()
-print(result)
+        recon_result = {}
+        if self.get_http_status:
+            recon_result['http_status'] = self.http_status()
+        if self.get_tech_detect:
+            recon_result['tech_detect'] = self.tech_detect()
+        if self.get_port_scan:
+            recon_result['port_scan'] = self.port_scan()
+        if self.get_whois_info:
+            recon_result['whois_info'] = self.whois_info()
+        if self.get_ip_lookup:
+            recon_result['ip_lookup'] = self.ip_lookup()
+        if self.get_asn_lookup:
+            recon_result['asn_lookup'] = self.asn_lookup()
+        if self.get_screenshot:
+            recon_result['screenshot'] = self.screenshot()
+        if self.get_dns_check:
+            recon_result['check_dns'] = self.dns_check()
+        return recon_result
